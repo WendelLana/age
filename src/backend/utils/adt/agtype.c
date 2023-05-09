@@ -10116,3 +10116,46 @@ Datum age_unnest(PG_FUNCTION_ARGS)
 
     PG_RETURN_NULL();
 }
+
+PG_FUNCTION_INFO_V1(age_nullif);
+/*
+ * Function that returns a null value if the two specified expressions are equal.
+ */
+Datum age_nullif(PG_FUNCTION_ARGS)
+{
+    int nargs;
+    Datum *args;
+    bool *nulls;
+    Oid *types;
+
+    /* extract argumment values */
+    nargs = extract_variadic_args(fcinfo, 0, true, &args, &types, &nulls);
+
+    /* check number of args */
+    if (nargs != 2)
+        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("nullif() invalid number of arguments")));
+
+    /* nullif() supports any agtype value input */
+    if (types[0] == AGTYPEOID && types[1] == AGTYPEOID)
+    {
+        agtype *agt_arg1, *agt_arg2;
+        agtype_value *agtv_arg1, *agtv_arg2;
+        /* get the agtype argument */
+        agt_arg1 = DATUM_GET_AGTYPE_P(args[0]);
+        agt_arg2 = DATUM_GET_AGTYPE_P(args[1]);
+
+        if (!AGT_ROOT_IS_SCALAR(agt_arg1) || !AGT_ROOT_IS_SCALAR(agt_arg2))
+            ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                            errmsg("nullif() only supports scalar arguments")));
+
+        agtv_arg1 = get_ith_agtype_value_from_container(&agt_arg1->root, 0);
+        agtv_arg2 = get_ith_agtype_value_from_container(&agt_arg2->root, 0);
+
+        if (compare_agtype_scalar_values(agtv_arg1, agtv_arg2) == 0)
+        {
+            PG_RETURN_NULL();
+        }
+    }
+    return args[0];
+}
