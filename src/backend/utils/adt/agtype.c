@@ -10127,6 +10127,8 @@ Datum age_nullif(PG_FUNCTION_ARGS)
     Datum *args;
     bool *nulls;
     Oid *types;
+    int i;
+    agtype_value results[2];
 
     /* extract argumment values */
     nargs = extract_variadic_args(fcinfo, 0, true, &args, &types, &nulls);
@@ -10136,26 +10138,114 @@ Datum age_nullif(PG_FUNCTION_ARGS)
         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("nullif() invalid number of arguments")));
 
-    /* nullif() supports any agtype value input */
-    if (types[0] == AGTYPEOID && types[1] == AGTYPEOID)
+    if (nulls[0])
     {
-        agtype *agt_arg1, *agt_arg2;
-        agtype_value *agtv_arg1, *agtv_arg2;
-        /* get the agtype argument */
-        agt_arg1 = DATUM_GET_AGTYPE_P(args[0]);
-        agt_arg2 = DATUM_GET_AGTYPE_P(args[1]);
+        PG_RETURN_NULL();
+    }
+    else if (nulls[1])
+    {
+        nargs = 1;
+    }
 
-        if (!AGT_ROOT_IS_SCALAR(agt_arg1) || !AGT_ROOT_IS_SCALAR(agt_arg2))
-            ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                            errmsg("nullif() only supports scalar arguments")));
+    /*
+    * get the AGTYPE and AGTYPE values of the arguments
+    * if it is NOT an AGTYPE, we need convert it to one, if possible
+    */
+    for (i = 0; i < nargs; i++)
+    {
+        Oid type = types[i];
+        Datum arg = args[i];
 
-        agtv_arg1 = get_ith_agtype_value_from_container(&agt_arg1->root, 0);
-        agtv_arg2 = get_ith_agtype_value_from_container(&agt_arg2->root, 0);
-
-        if (compare_agtype_scalar_values(agtv_arg1, agtv_arg2) == 0)
+        /*
+        * check if it is a AGTYPE, if not check for
+        * PG types that easily translate to AGTYPE
+        */
+        if (type == AGTYPEOID)
         {
-            PG_RETURN_NULL();
+            agtype *ag_arg;
+            agtype_value *ag_value;
+
+            /* get the agtypes of the arguments */
+            ag_arg = DATUM_GET_AGTYPE_P(arg);
+
+            if (!AGT_ROOT_IS_SCALAR(ag_arg))
+                ereport(ERROR,
+                        (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                         errmsg("nullif() only supports scalar arguments")));
+
+            /* get the agtype values of the arguments */
+            ag_value = get_ith_agtype_value_from_container(&ag_arg->root, 0);
+            results[i] = *ag_value;
+        }
+        else if (type == BOOLOID)
+        {
+            results[i].type = AGTV_BOOL;
+            results[i].val.boolean = DatumGetBool(arg);
+        }
+        else if (type == INT2OID || type == INT4OID || type == INT8OID)
+        {
+            results[i].type = AGTV_INTEGER;
+
+            if (type == INT8OID)
+            {
+                results[i].val.int_value = DatumGetInt64(arg);
+            }
+            else if (type == INT4OID)
+            {
+                results[i].val.int_value = (int64) DatumGetInt32(arg);
+            }
+            else if (type == INT4OID)
+            {
+                results[i].val.int_value = (int64) DatumGetInt16(arg);
+            }
+        }
+        else if (type == FLOAT4OID || type == FLOAT8OID)
+        {
+            results[i].type = AGTV_FLOAT;
+
+            if (type == FLOAT8OID)
+            {
+                results[i].val.float_value = DatumGetFloat8(arg);
+            }
+            else if (type == FLOAT4OID)
+            {
+                results[i].val.float_value = (float8) DatumGetFloat4(arg);
+            }
+        }
+        else if (type == NUMERICOID)
+        {
+            results[i].type = AGTV_NUMERIC;
+            results[i].val.numeric = DatumGetNumeric(arg);
+        }
+        else if (type == CSTRINGOID)
+        {
+            results[i].type = AGTV_STRING;
+            results[i].val.string.val = DatumGetCString(arg);
+            results[i].val.string.len = strlen(results[i].val.string.val);
+        }
+        else if (type == TEXTOID)
+        {
+            results[i].type = AGTV_STRING;
+            results[i].val.string.val = text_to_cstring(DatumGetTextPP(arg));
+            results[i].val.string.len = strlen(results[i].val.string.val);
+        }
+        else
+        {
+            ereport(ERROR,
+                    (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                     errmsg("nullif: unsupported arg type")));
         }
     }
-    return args[0];
+
+    /*
+    * ensures that the second argument is not null and compare
+    * two agtype scalar values, return null if they are equal
+    */
+    if (!nulls[1] && compare_agtype_scalar_values(&results[0], &results[1]) == 0)
+    {
+        PG_RETURN_NULL();
+    }
+    
+    /* otherwise, just return the build result of first arg */
+    PG_RETURN_POINTER(agtype_value_to_agtype(&results[0]));
 }
