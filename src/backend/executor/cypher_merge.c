@@ -631,8 +631,10 @@ Node *create_cypher_merge_plan_state(CustomScan *cscan)
 static Datum merge_vertex(cypher_merge_custom_scan_state *css,
                           cypher_target_node *node, ListCell *next, List *list)
 {
-    bool isNull;
+    bool id_isnull;
+    bool label_id_isnull;
     Datum id;
+    Datum label_id;
     EState *estate = css->css.ss.ps.state;
     ExprContext *econtext = css->css.ss.ps.ps_ExprContext;
     ResultRelInfo *resultRelInfo = node->resultRelInfo;
@@ -666,14 +668,20 @@ static Datum merge_vertex(cypher_merge_custom_scan_state *css,
         ExecClearTuple(elemTupleSlot);
 
         /* get the next graphid for this vertex */
-        id = ExecEvalExpr(node->id_expr_state, econtext, &isNull);
+        id = ExecEvalExpr(node->id_expr_state, econtext, &id_isnull);
         elemTupleSlot->tts_values[vertex_tuple_id] = id;
-        elemTupleSlot->tts_isnull[vertex_tuple_id] = isNull;
+        elemTupleSlot->tts_isnull[vertex_tuple_id] = id_isnull;
 
         /* get the properties for this vertex */
-        prop = ExecEvalExpr(node->prop_expr_state, econtext, &isNull);
+        prop = ExecEvalExpr(node->prop_expr_state, econtext, &id_isnull);
         elemTupleSlot->tts_values[vertex_tuple_properties] = prop;
-        elemTupleSlot->tts_isnull[vertex_tuple_properties] = isNull;
+        elemTupleSlot->tts_isnull[vertex_tuple_properties] = id_isnull;
+
+        // get the label id for this vertex
+        label_id = ExecEvalExpr(node->label_id_expr_state, econtext,
+                                &label_id_isnull);
+        elemTupleSlot->tts_values[vertex_tuple_label_id] = label_id;
+        elemTupleSlot->tts_isnull[vertex_tuple_label_id] = label_id_isnull;
 
         /*
          * Insert the new vertex.
@@ -774,6 +782,8 @@ static Datum merge_vertex(cypher_merge_custom_scan_state *css,
         Datum d;
         agtype_value *v = NULL;
         agtype_value *id_value = NULL;
+        agtype_value *label_name;
+        char *label;
 
         /* check that the variable isn't NULL */
         if (scanTupleSlot->tts_isnull[node->tuple_position - 1])
@@ -798,6 +808,13 @@ static Datum merge_vertex(cypher_merge_custom_scan_state *css,
                      errmsg("agtype must resolve to a vertex")));
         }
 
+        // extract the label agtype field
+        label_name = GET_AGTYPE_VALUE_OBJECT_VALUE(v, "label");
+
+        // extract the label name and label id
+        label = label_name->val.string.val;
+        label_id = get_label_id(label, css->graph_oid);
+
         /* extract the id agtype field */
         id_value = GET_AGTYPE_VALUE_OBJECT_VALUE(v, "id");
 
@@ -817,7 +834,7 @@ static Datum merge_vertex(cypher_merge_custom_scan_state *css,
          */
         if (!SAFE_TO_SKIP_EXISTENCE_CHECK(node->flags))
         {
-            if (!entity_exists(estate, css->graph_oid, DATUM_GET_GRAPHID(id)))
+            if (!entity_exists(estate, css->graph_oid, DATUM_GET_GRAPHID(id), label_id))
             {
                 ereport(ERROR,
                     (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

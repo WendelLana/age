@@ -577,6 +577,8 @@ static Datum create_vertex(cypher_create_custom_scan_state *css,
         agtype_value *id_value;
         TupleTableSlot *scantuple;
         PlanState *ps;
+        agtype_value *label_name;
+        char *label;
 
         ps = css->css.ss.ps.lefttree;
         scantuple = ps->ps_ExprContext->ecxt_scantuple;
@@ -593,6 +595,13 @@ static Datum create_vertex(cypher_create_custom_scan_state *css,
                     (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                      errmsg("agtype must resolve to a vertex")));
         }
+
+        // extract the label agtype field
+        label_name = GET_AGTYPE_VALUE_OBJECT_VALUE(v, "label");
+
+        // extract the label name and label id
+        label = label_name->val.string.val;
+        label_id = get_label_id(label, css->graph_oid);
 
         // extract the id agtype field
         id_value = GET_AGTYPE_VALUE_OBJECT_VALUE(v, "id");
@@ -613,7 +622,7 @@ static Datum create_vertex(cypher_create_custom_scan_state *css,
          */
         if (!SAFE_TO_SKIP_EXISTENCE_CHECK(node->flags))
         {
-            if (!entity_exists(estate, css->graph_oid, DATUM_GET_GRAPHID(id)))
+            if (!entity_exists(estate, css->graph_oid, DATUM_GET_GRAPHID(id), label_id))
             {
                 ereport(ERROR,
                     (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
